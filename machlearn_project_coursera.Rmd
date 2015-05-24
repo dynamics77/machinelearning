@@ -4,18 +4,16 @@ author: "Karunesh Arora"
 date: "May 23, 2015"
 output: html_document
 ---
-
 #Executive Summary
 The goal of this project is to use the Weight Lifting Exercises dataset to predict the manner in which participants did the exercise. Data for this excerise was collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data for this project come from this source (http://groupware.les.inf.puc-rio.br/har). 
 
-Here, we first downloaded the training and validation data for this project. Following, we cleaned the data, i.e., omitted variables with nearzero variances or that contained mostly "NA" in most rows. Then we the partitioned this cleaned data into the "Test" and "Training" set. Next, we performed explaratory data analysis using Principal Components Analysis (PCA). Finally, we began the fitting process where we first applied the Gradient Boosting Regression Model (GBM) on the training data pre-processed using PCA. This fitting process resulted in accuracy of 0.9199834 and 0.9274 on the the training and the test data set, respectively. We then applied the GBM model on the training data that was NOT pre-processed using PCA. This resulted in much higher accuracy for both the training (0.9900854) and the test set compared to GBM applied to data preprocessed using PCA. Therefore, we applied the GBM model to the 20 test cases available in the validation data and submitted predictions to the programming assignment for automated grading.
+Here, we first downloaded the training and validation data for this project. Following, we cleaned the data, i.e., omitted variables with nearzero variances or that contained mostly "NA" in most rows. Then we the partitioned this cleaned data into the "Test" and "Training" set. Next, we performed explaratory data analysis using Principal Components Analysis (PCA). Finally, we began the fitting process where we first applied the Gradient Boosting Regression Model (GBM) on the training data pre-processed using PCA. This fitting process resulted in accuracy of 0.9199834 and 0.9274 on the the training and the test data set, respectively. We then applied the GBM model on the training data that was NOT pre-processed using PCA. This resulted in much higher accuracy for both the training (0.9900854) and the test (0.9937) set compared to GBM applied to data preprocessed using PCA. Therefore, we applied the GBM model to the 20 test cases available in the validation data and submitted predictions to the programming assignment for automated grading.
 
 ```{r}
 require(caret); require(ggplot2);suppressWarnings(require(readr)); suppressWarnings(require(ggbiplot))
 ```
 
 ##Import data
-
 ```{r}
 #Import data
 # Training data https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
@@ -39,6 +37,7 @@ zerovars<-zerovars[-5]
 #omit columns with near zero variance
 training_DF<-training_DF[,-zerovars]
 
+
 # Omit columns with mostly NA values
 training_DF<-training_DF[colSums(is.na(training_DF)) == 0]
 
@@ -56,6 +55,7 @@ training_DF$classe<-as.factor(training_DF$classe)
 #final dimensions
 dim(training_DF)
 ```
+
 ##Create data partition into Test and Train based on "classe" variable
 ```{r}
 #Split into Test and Train
@@ -63,19 +63,22 @@ inTrain <- createDataPartition(y = training_DF$classe, p=0.70, list=FALSE)
 finaltraining_DF <- training_DF[inTrain, ]
 finaltesting_DF <- training_DF[-inTrain, ]
 ```
+
 ##Exploratory data analysis using PCA
 Perform PCA analysis and plot variance explained by all PC's. Results show that 25 PC's explain all variance in the training data (See figure below). 
+
 ```{r }
 #Compute PCs of the training set
 pcaObject<-prcomp(finaltraining_DF[sapply(finaltraining_DF,is.numeric)],scale.=TRUE,center=TRUE)
 #compute percent variance of each PC
 percentVariance <- pcaObject$sd^2/sum(pcaObject$sd^2)*100
 ```
-```{r test-a, fig.show='hold', fig.width=5}
+```{r test-a, fig.width=5}
 #Plot percent total variance explained by each component
 #more than 90% variance of the data explained by 25 PC's
 plot(percentVariance ,type='l',xlab="Number of Principal Components (PCs)",cex=1.2,lwd=2)
 ```
+
 #Pre-process the data with PCA
 ```{r}
 #train PCA model -center and scale the training set
@@ -122,11 +125,11 @@ system.time(gbm.tune <- train(classe ~ ., data = trainScaled,
                  trControl = ctrl))
 gbm.tune
 ```
-##Results of tuning parameters 
+
+##Tuning results
 Default method Accuracy and Cohen's Kappa was the performance criterion used to select the optimal model. The final values used for the model were: interaction.depth = 7, n.trees = 200  and shrinkage = 0.1
   
 ##GBM model predictions using tuned parameters applied to data pre-processed with PCA
-
 ```{r, eval=FALSE}
 fitControl <- trainControl(## 10-fold CV
   method = "repeatedcv",
@@ -222,7 +225,7 @@ require(doMC)
 registerDoMC(cores=5)
 
 set.seed(825)
-gbmFit2 <- train(trainScaled$classe ~ ., data = finaltraining_DF,
+gbmFit2 <- train(finaltraining_DF$classe ~ ., data = finaltraining_DF,
                  method = "gbm",
                  trControl = fitControl,
                  tuneGrid = data.frame(interaction.depth = 7,
@@ -327,4 +330,4 @@ predict(gbmFit2,validation_DF)
 Levels: A B C D E
 ```
 #Conclusions
-Our results show that GBM model with tuned parameters when applied to exercise data that is not pre-processed using PCA gave very high accuracy close to 99% with out-of-sample error less than 1%.
+Our results show that GBM model with tuned parameters when applied to data that is not pre-processed using PCA gave very high accuracy close to 99% with out-of-sample error less than 1%.
