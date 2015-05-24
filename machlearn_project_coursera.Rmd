@@ -1,0 +1,351 @@
+---
+title: "Practical Machine Learning Project"
+author: "Karunesh Arora"
+date: "May 23, 2015"
+output: html_document
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.path='Figs/',
+                       warning=FALSE, message=FALSE)
+```
+#Executive Summary
+The goal of this project is to use the Weight Lifting Exercises dataset to predict the manner in which participants did the exercise. Data for this excerise was collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The data for this project come from this source (http://groupware.les.inf.puc-rio.br/har). 
+
+Here, we first downloaded the training and validation data for this project. Following, we cleaned the data, i.e., omitted variables with nearzero variances or that contained mostly "NA" in most rows. Then we the partitioned this cleaned data into the "Test" and "Training" set. Next, we performed explaratory data analysis using Principal Components Analysis (PCA). Finally, we began the fitting process where we first applied the Gradient Boosting Regression Model (GBM) on the training data pre-processed using PCA. This fitting process resulted in accuracy of 0.9199834 and 0.9274 on the the training and the test data set, respectively. We then applied the GBM model on the training data that was NOT pre-processed using PCA. This resulted in much higher accuracy for both the training (0.9900854) and the test set compared to GBM applied to data preprocessed using PCA. Therefore, we applied the GBM model to the 20 test cases available in the validation data and submitted predictions to the programming assignment for automated grading.
+
+ From examing the boxplots of the sampling distributions for the two models it is apparent that, in this case, the gbm has the advantage.
+
+<!---
+You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+--->
+
+```{r}
+require(caret); require(ggplot2);suppressWarnings(require(readr)); suppressWarnings(require(ggbiplot))
+```
+
+##Import data
+
+```{r}
+#Import data
+# Training data https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+#Validation data https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+suppressWarnings(training_DF<-read_csv("~/Downloads/pml-training.csv",na = "NA"))
+suppressWarnings(validation_DF<-read_csv("~/Downloads/pml-testing.csv",na = "NA"))
+
+dim(training_DF)
+dim(validation_DF)
+```
+
+##Cleaning the Imported data
+```{r}
+#clean the data
+#filter near-zero variance predictors
+zerovars<-nearZeroVar(training_DF)
+#we choose to only omit columns for which both nzv=="FALSE" and zeroVar=="FALSE"
+#Therefore keep "yaw_arm" variable 
+zerovars<-zerovars[-5]              
+
+#omit columns with near zero variance
+training_DF<-training_DF[,-zerovars]
+
+
+# Omit columns with mostly NA values
+training_DF<-training_DF[colSums(is.na(training_DF)) == 0]
+
+
+#omit columns that are not the predictor variables
+names(training_DF[1:6])
+training_DF<-training_DF[,-c(1:6)]
+
+
+# Omit "skewness_yaw_belt" that only contains "DIV/0!" garbage characters
+training_DF<-training_DF[,-c(5)]
+
+# Make "classe" as factor variable
+#needed for data partition based on "classe" below
+training_DF$classe<-as.factor(training_DF$classe)
+
+#final dimensions
+dim(training_DF)
+```
+
+##Create data partition into Test and Train based on "classe" variable
+
+```{r}
+#Split into Test and Train
+inTrain <- createDataPartition(y = training_DF$classe, p=0.70, list=FALSE)
+finaltraining_DF <- training_DF[inTrain, ]
+finaltesting_DF <- training_DF[-inTrain, ]
+```
+
+##Exploratory data analysis using PCA
+Perform PCA analysis and plot variance explained by all PC's. Results show that 25 PC's explain all variance in the training data (See figure below). 
+
+```{r }
+#Compute PCs of the training set
+pcaObject<-prcomp(finaltraining_DF[sapply(finaltraining_DF,is.numeric)],scale.=TRUE,center=TRUE)
+#compute percent variance of each PC
+percentVariance <- pcaObject$sd^2/sum(pcaObject$sd^2)*100
+```
+```{r test-a, fig.show='hold', fig.width=5}
+#Plot percent total variance explained by each component
+#more than 90% variance of the data explained by 25 PC's
+plot(percentVariance ,type='l',xlab="Number of Principal Components (PCs)",cex=1.2,lwd=2)
+```
+
+#Pre-process the data with PCA
+```{r}
+#train PCA model -center and scale the training set
+#compress the training data based on PCA=
+procValues<-preProcess(finaltraining_DF[,-52],method=c("center","scale","pca"))
+
+#Apply PCA model to training and test sets
+#PCA only applied to numeric columns and not to "classe" 
+trainScaled<-predict(procValues,finaltraining_DF[,-52])
+testScaled<-predict(procValues,finaltesting_DF[,-52])
+
+#Add "classe" factor variable back to dataframe
+trainScaled$classe<-finaltraining_DF$classe
+testScaled$classe<-finaltesting_DF$classe
+```
+
+#Generalized Boosted Regression Model (GBM)
+We first tuned the parameters n.trees, shrinkage and interaction.depth before applying this model to training set (see below).
+
+##Tuning the parameters in GBM 
+```{r,eval=FALSE}
+#The trainControl function to set the training method
+# Cross-Validated (10 fold, repeated 5 times)
+ctrl<-trainControl(method="repeatedcv",
+                   repeats=5,
+                   number = 10,
+                   classProbs = TRUE)
+
+#Use the expand.grid to specify the search space
+gbmGrid <-  expand.grid(interaction.depth = seq(1,9,by=2),
+                        n.trees = seq(1, 500, by=100),
+                        shrinkage = c(0.01,0.1),
+                        n.minobsinnode = 10)
+
+#run job in parallel
+require(doMC)
+registerDoMC(cores=5)
+
+#Run the train function
+set.seed(1)
+system.time(gbm.tune <- train(classe ~ ., data = trainScaled,
+                 method = "gbm",
+                 verbose = FALSE,
+                 tuneGrid = gbmGrid,
+                 trControl = ctrl))
+gbm.tune
+```
+
+##Tuning results
+Default method Accuracy and Cohen's Kappa was the performance criterion used to select the optimal model. The final values used for the model were: interaction.depth = 7, n.trees = 200  and shrinkage = 0.1
+  
+##GBM model predictions using tuned parameters applied to data pre-processed with PCA
+
+```{r, eval=FALSE}
+fitControl <- trainControl(## 10-fold CV
+  method = "repeatedcv",
+  number = 10,
+  ## repeated five times
+  repeats = 5,
+  classProbs = TRUE)
+
+#run job in parallel
+require(doMC)
+registerDoMC(cores=5)
+
+set.seed(825)
+gbmFit1 <- train(trainScaled$classe ~ ., data = trainScaled,
+                 method = "gbm",
+                 trControl = fitControl,
+                tuneGrid = data.frame(interaction.depth = 7,
+                                       n.trees = 200,
+                                       shrinkage = 0.1,
+                                       n.minobsinnode = 10),
+                                       verbose = FALSE)
+gbmFit1
+```
+
+```{r, results="hide",eval=FALSE}
+#result from executing gbmFit1
+#I ran these jobs in parallel on terminal.
+#Rstudio kept crashing. Therefore I had to copy results
+#from the terminal to the markdown document.
+
+Stochastic Gradient Boosting 
+
+13737 samples
+   24 predictor
+    5 classes: 'A', 'B', 'C', 'D', 'E' 
+
+No pre-processing
+Resampling: Cross-Validated (10 fold, repeated 5 times) 
+
+Summary of sample sizes: 12363, 12363, 12363, 12364, 12364, 12364, ... 
+
+Resampling results
+
+  Accuracy   Kappa      Accuracy SD  Kappa SD 
+  0.9199834  0.8987348  0.008013277  0.0101495
+
+Tuning parameter 'n.trees' was held constant at a value of 200
+
+Tuning parameter 'shrinkage' was held constant at a value of 0.1
+
+Tuning parameter 'n.minobsinnode' was held constant at a value of 10
+```
+Check the performance of the model. Apply predict function on the test set and print
+the confusion matrix.
+
+```{r, eval=FALSE}
+model_1<-predict(gbmFit1,testScaled)
+confusionMatrix(testScaled$classe,model_1)
+```
+
+```{r, results="hide",eval=FALSE}
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1625   24    7   15    3
+         B   67 1003   45    9   15
+         C    8   40  954   16    8
+         D    8   10   71  865   10
+         E    6   23   20   22 1011
+
+Overall Statistics
+                                          
+               Accuracy : 0.9274          
+                 95% CI : (0.9205, 0.9339)
+    No Information Rate : 0.2912          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.9082          
+ Mcnemar's Test P-Value : 4.514e-11  
+ ```
+ 
+Results show that accuracy of the model applied to the test set is 0.9274. Therefore, the out of sample error is (1-0.9274)=.0726, i.e., 7.26%.
+
+
+##GBM model predictions applied to training data without any prior pre-processing with PCA
+
+We applied GBM to training data without any pre-processing. The goal was to check if compressing the variables using PCA influences the accuracy of the results.
+
+```{r, eval=FALSE}
+#run job in parallel
+require(doMC)
+registerDoMC(cores=5)
+
+set.seed(825)
+gbmFit2 <- train(trainScaled$classe ~ ., data = finaltraining_DF,
+                 method = "gbm",
+                 trControl = fitControl,
+                 tuneGrid = data.frame(interaction.depth = 7,
+                                       n.trees = 200,
+                                       shrinkage = 0.1,
+                                       n.minobsinnode = 10),
+                                       verbose = FALSE)
+gbmFit2
+```
+
+Clearly, results below show that the accuracy of the results increased significantly (0.9900854) when GBM was applied to the training data that was not pre-processed with PCA.
+
+```{r, eval=FALSE,results="hide"}
+Stochastic Gradient Boosting 
+
+13737 samples
+   51 predictor
+    5 classes: 'A', 'B', 'C', 'D', 'E' 
+
+No pre-processing
+Resampling: Cross-Validated (10 fold, repeated 5 times) 
+
+Summary of sample sizes: 12363, 12363, 12363, 12364, 12364, 12364, ... 
+
+Resampling results
+
+  Accuracy   Kappa      Accuracy SD  Kappa SD   
+  0.9900854  0.9874601  0.003019812  0.003819212
+
+Tuning parameter 'n.trees' was held constant at a value of 200
+Tuning
+
+Tuning parameter 'shrinkage' was held constant at a value of 0.1
+
+Tuning parameter 'n.minobsinnode' was held constant at a value of 10
+
+```
+
+Applying predict function on the test data showed that the  out of sample accuracy is 0.9937. Therefore, out sample error is (1-0.9937 )= .0063 or 0.63 %
+
+```{r, eval=FALSE}
+model_2<-predict(gbmFit2,finaltesting_DF)
+confusionMatrix(finaltesting_DF$classe,model_2)
+```
+
+```{r, results="hide",eval=FALSE}
+Confusion Matrix and Statistics
+
+          Reference
+Prediction    A    B    C    D    E
+         A 1670    4    0    0    0
+         B    3 1132    4    0    0
+         C    0    9 1016    1    0
+         D    0    1    6  955    2
+         E    0    1    3    3 1075
+
+Overall Statistics
+                                          
+               Accuracy : 0.9937          
+                 95% CI : (0.9913, 0.9956)
+    No Information Rate : 0.2843          
+    P-Value [Acc > NIR] : < 2.2e-16       
+                                          
+                  Kappa : 0.992           
+ Mcnemar's Test P-Value : NA    
+ ```
+ 
+Show the relative importance of the variables the final trained model "gbmFit2".
+
+```{r, eval=FALSE}
+gbmImp<-varImp(gbmFit2, scale = TRUE)
+gbm variable importance
+
+  only 20 most important variables shown (out of 51)
+
+                  Overall
+roll_belt         100.000
+yaw_belt           61.946
+pitch_forearm      54.325
+magnet_dumbbell_z  38.568
+magnet_dumbbell_y  31.744
+pitch_belt         28.738
+roll_forearm       27.500
+magnet_belt_z      26.542
+accel_dumbbell_y   15.555
+gyros_belt_z       14.238
+accel_forearm_z    13.563
+roll_dumbbell      12.774
+magnet_forearm_z   12.738
+magnet_dumbbell_x  12.581
+accel_forearm_x    12.255
+accel_dumbbell_x    9.370
+gyros_dumbbell_y    9.359
+magnet_forearm_x    8.012
+magnet_arm_z        7.726
+magnet_belt_x       7.681
+```
+
+Finally, gbmFit2 was applied to the 20 test cases available in the validation data and submitted predictions to the programming assignment for automated grading.
+```{r,results="hide",eval=FALSE}
+predict(gbmFit2,validation_DF)
+ [1] B A B A A E D B A A B C B A E E A B B B
+Levels: A B C D E
+```
+
+#Conclusions
+Our results show that GBM model with tuned parameters when applied to data that is not pre-processed using PCA gave very high accuracy close to 99% with out-of-sample error less than 1%.
